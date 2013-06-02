@@ -1,4 +1,6 @@
 Module.*
 *.o
 *.ko
-
+*.mod.c
+.diob*
+.tmp_versions
