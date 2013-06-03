@@ -2,35 +2,44 @@ h1. Dynamic I/O buffering (a Linux kernel module)
 
 h2. Introduction
 
-The idea of this module is to provide automatic buffering for I/O on Linux at the level of system calls. Files are being watched while they are read, and whenever a  large file is read in many small chunks (which is the default behaviour of most programs), a buffer of up to 4 MB is allocated in kernel memory, and file content is pre-fetched.
+The idea of this module is to provide automatic buffering for I/O on Linux at the level of system calls. Files are being watched while they are read, and whenever it appears that a large file is read in many small chunks (which is the default behaviour of most libc-linked programs), a buffer of 4 MB is allocated in kernel memory, and file content gets pre-fetched.
 
 h2. Strategy
 
-Every process has a file descriptor table in which file descriptors are mapped to entries in the system-wide open file table. These pointers are converted into a CRC-16 checksum ("the hash"), resulting in a maximum of 2^16 files being watched for I/O behaviour, and each file is managed internally via its hash.
+Every process has a _file descriptor table_ in which file descriptors are mapped to entries in the system-wide _open file table_. These open file table pointers are converted into a CRC-16 checksum ("the hash"), resulting in a maximum of 2^16 files being watched for I/O behaviour, and each file is managed internally via its hash.
+
+The hashing is necessary because different processes use the same file descriptors for different files and the open file table does not seem to be a table where each entry has an offset but file objects seem to be scattered throughout kernel memory, hence the hashing. CRC-16, when implemented with a reasonable polynomial, can be expected to uniformly distribute various pointer over a range of 64k slots.
 
 Whenever a file gets opened, a couple of checks are performed to determine whether the file should be watched:
 
-* it must be a regular file via fstat()
+* it must be a regular file as per fstat()
 * it must have a minimum size of 16 MB
 
-If these tests pass, the file will be watched. 
+If these tests pass, the file will be watched. The aim of these tests is to skip files which cannot be seeked and to discard most files for which additonal buffering wouldn't buy much.
 
-Whenever the read system call is invoked for a watched file, a counter is increased every time 64k or less are read in a row. When this counter reaches 1024, buffering gets activated for the file: a 4 MB buffer is allocated in kernel memory, filled from the current file position and returned to the user space in small chunks as requested, the buffer gets re-filled automatically whenever it is necessary. On every read call which just returns data from the buffer instead actually performing a file system read, the file pointer is advanced as necessary (which should only affect internal kernel data structures and result in no actual I/O).
+Whenever the @read@ system call is invoked for a watched file, a counter is increased every time a block of 64k or less is read (this is considered a _small read_). When this counter reaches 1024, buffering gets activated for the file. A 4 MB buffer is allocated in kernel memory, filled from the current file position and returned to user space in small chunks as requested. The buffer gets re-filled automatically whenever it is necessary. On every @read@ call which just returns data from the buffer instead actually performing a file system @read@, the file pointer is advanced as necessary via @lseek@ (which should only affect internal kernel data structures and result in no actual I/O), thus mimicking a default @read@ call.
 
-Any call to open, close, lseek or write will de-activate buffering.
+Any call to @open@, @close@, @lseek@ or @write@ will de-activate read buffering.
 
 h2. Results
 
-A reduction in reading time to about 50% could be observed, it is expected that this module will mitigate I/O problems due to excessive amounts of I/O system calls resulting from small default buffer sizes.
+With the module loaded, a reduction in executing time to about 50% could be observed while running sha1sum on a 100 MB file. It is expected that this module will mitigate I/O problems on cluster file systems due to excessive amounts of I/O system calls resulting from small default buffer sizes.
 
 h2. Alternatives
 
-Writing a kernel module carries a great potential to mess a system up so bad it needs to be reset. Alternatively, the provided functionality could be implemented as patched gnulibc, but there are problems with the LD_PRELOAD approach: it's not working reliably.
+Writing a kernel module carries a great potential to mess a system up so bad it needs to be reset. There are a couple of possible alternatives:
+
+* the provided functionality could be implemented as patched gnulibc, but there are problems with the LD_PRELOAD approach: it's not working reliably
+* the file system driver could be patched to provide the same functionality
 
 h2. To do list
 
-- it is unclear what happens when the module is unloaded and hooked syscalls, especially reads, are still pending
-- don't use vmalloc() to allocate accelerators, manage a fixed array of accelerator slots to save memory
-- determine memory footprint
-- properly handle return values
-- add support for writing
+* it is unclear what happens when the module is unloaded and hooked syscalls, especially reads, are still pending
+* don't use vmalloc() to allocate accelerators, manage a fixed array of accelerator slots to save memory
+* determine memory footprint
+* properly handle all return values
+* add support for writing
+* grow the buffer over time up to a maximum size: 
+  ** by factor 32 (4k, 128k, 4M) or
+  ** by factor 4 (4k, 16k, 64k, 256k, 1M, 4M)
+* re-think buffering activation strategy... is it good?
