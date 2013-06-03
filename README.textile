@@ -2,7 +2,7 @@ h1. Dynamic I/O buffering (a Linux kernel module)
 
 h2. Introduction
 
-The idea of this module is to provide automatic buffering for I/O on Linux at the level of system calls. Files are being watched while they are read and written, and whenever a  large file is read in many small chunks (which is the default behaviour of most programs), a buffer of up to 4 MB is allocated in kernel memory, and file content is pre-fetched.
+The idea of this module is to provide automatic buffering for I/O on Linux at the level of system calls. Files are being watched while they are read, and whenever a  large file is read in many small chunks (which is the default behaviour of most programs), a buffer of up to 4 MB is allocated in kernel memory, and file content is pre-fetched.
 
 h2. Strategy
 
@@ -33,3 +33,4 @@ h2. To do list
 - don't use vmalloc() to allocate accelerators, manage a fixed array of accelerator slots to save memory
 - determine memory footprint
 - properly handle return values
+- add support for writing
