@@ -15,14 +15,17 @@
 #undef MODULE
 #define MODULE
 
-#include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/init.h>
-#include <linux/unistd.h>
 #include <asm/cacheflush.h>
 #include <asm/semaphore.h>
 #include <asm/uaccess.h>
+#include <linux/file.h>
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/unistd.h>
 #include <linux/vmalloc.h>
+
+#include "crc16.h"
 
 MODULE_LICENSE("GPL");
 
@@ -33,20 +36,37 @@ asmlinkage int (*original_close) (int);
 asmlinkage off_t (*original_lseek) (int, off_t, int);
 asmlinkage ssize_t (*original_read) (int, void*, size_t);
 asmlinkage ssize_t (*original_write) (int, const void*, size_t);
+asmlinkage int (*original_fstat) (int, struct stat*);
 
-#define MAX_FD 256
+// #define MAX_FD 256
+#define MAX_HASH 0x10000
 #define TRIGGER_COUNT 1024
 #define MAX_READ_SIZE 65536
 #define MAX_ACCELERATORS 256
+#define BUFFER_SIZE_IN_KILOBYTES 4096
+#define MIN_FILE_SIZE 16777216
 
-typedef struct _r_fd_watcher r_fd_watcher;
+// typedef struct _r_fd_watcher r_fd_watcher;
+typedef struct _r_hash_watcher r_hash_watcher;
 typedef struct _r_fd_accelerator r_fd_accelerator;
+typedef unsigned short hash_t;
 
+/*
 struct _r_fd_watcher
 {
     bool watch_this;
     unsigned short small_read_count;
     r_fd_accelerator* accelerator;
+};
+*/
+
+struct _r_hash_watcher
+{
+    void* file_pointer;
+    // TODO: This is cosy, but it wastes a lot of space because a full page
+    // is probably allocated on ever vmalloc() call
+    r_fd_accelerator* accelerator;
+    unsigned short small_read_count;
 };
 
 struct _r_fd_accelerator
@@ -57,55 +77,14 @@ struct _r_fd_accelerator
     void *buffer;
 };
 
-static r_fd_watcher fd_watcher[MAX_FD];
+// static r_fd_watcher fd_watcher[MAX_FD];
+static r_hash_watcher hash_watcher[MAX_HASH];
 static unsigned int accelerator_count = 0;
 static const char* PREFIXES[] = {
     "/media", 
     "/home", 
     NULL}; // NULL is required at the end to stop processing
-
-static void init_watcher(int fd)
-{
-    if (fd >= 0 && fd < MAX_FD)
-    {
-        fd_watcher[fd].watch_this = false;
-        fd_watcher[fd].small_read_count = 0;
-        fd_watcher[fd].accelerator = NULL;
-    }
-}
-
-
-static void reset_accelerator(int fd)
-{
-    if (fd >= 0 && fd < MAX_FD)
-    {
-        if (fd_watcher[fd].accelerator)
-        {
-            if (fd_watcher[fd].accelerator->buffer)
-            {
-                vfree(fd_watcher[fd].accelerator->buffer);
-                fd_watcher[fd].accelerator->buffer = NULL;
-            }
-            vfree(fd_watcher[fd].accelerator);
-            fd_watcher[fd].accelerator = NULL;
-        }
-    }
-}
-
-static void reset_watcher(int fd)
-{
-//     printk("reset_watcher(%d)\n", fd);
-    if (fd >= 0 && fd < MAX_FD && fd_watcher[fd].watch_this)
-    {
-        fd_watcher[fd].watch_this = false;
-        fd_watcher[fd].small_read_count = 0;
-        if (fd_watcher[fd].accelerator)
-        {
-            printk("Now resetting accelerator %p.\n", fd_watcher[fd].accelerator);
-            reset_accelerator(fd);
-        }
-    }
-}
+    
 
 static void disable_page_protection(void) 
 {
@@ -129,49 +108,113 @@ static void enable_page_protection(void)
     }
 }
 
+static void init_watcher(hash_t hash)
+{
+    hash_watcher[hash].file_pointer = NULL;
+    hash_watcher[hash].small_read_count = 0;
+    hash_watcher[hash].accelerator = NULL;
+}
+
+
+static void reset_accelerator(hash_t hash)
+{
+//     printk("void reset_accelerator(fd = %d)\n", fd);
+    if (hash_watcher[hash].accelerator)
+    {
+        if (hash_watcher[hash].accelerator->buffer)
+        {
+            vfree(hash_watcher[hash].accelerator->buffer);
+            hash_watcher[hash].accelerator->buffer = NULL;
+        }
+        vfree(hash_watcher[hash].accelerator);
+        hash_watcher[hash].accelerator = NULL;
+    }
+}
+
+static void reset_watcher(hash_t hash)
+{
+//     printk("void reset_watcher(fd = %d)\n", fd);
+    if (hash_watcher[hash].file_pointer)
+    {
+        printk("Now resetting watcher for hash %04x.\n", hash);
+        hash_watcher[hash].file_pointer = false;
+        hash_watcher[hash].small_read_count = 0;
+        if (hash_watcher[hash].accelerator)
+        {
+            printk("Now resetting accelerator %p.\n", hash_watcher[hash].accelerator);
+            reset_accelerator(hash);
+        }
+    }
+}
+
 asmlinkage int hook_open(const char* pathname, int flags, int mode)
 {
+    struct file* _file;
+    unsigned short hash;
+    struct stat _stat;
+    mm_segment_t fs;
+    int stat_result;
+    
     int fd = original_open(pathname, flags, mode);
     
-    if (fd >= 0 && fd < MAX_FD)
-    {
-        off_t pos;
-        bool prefix_match = false;
-        const char** patterns = PREFIXES;
-        
-        reset_watcher(fd);
+    rcu_read_lock();
+    _file = fcheck_files(current->files, fd);
+    rcu_read_unlock();
     
-        while (*patterns)
+    if (!_file)
+        return fd;
+    
+    hash = crc16_from_pointer(_file);
+    
+    reset_watcher(hash);
+
+    // stat the file descriptor
+    fs = get_fs();
+    set_fs(get_ds());
+    stat_result = original_fstat(fd, &_stat);
+    set_fs(fs);
+    
+    if (stat_result == 0)
+    {
+        // stat was successful
+        off_t filesize = _stat.st_size;
+        bool is_regular_file = S_ISREG(_stat.st_mode);
+        
+        if (is_regular_file && filesize >= MIN_FILE_SIZE)
         {
-            const char *pattern = *(patterns++);
-            const char *subject = pathname;
-            bool good = true;
-            while (*pattern && *subject)
+            // file is a regular file and not too small
+            bool prefix_match = false;
+            const char** patterns = PREFIXES;
+        
+            /*
+            while (*patterns)
             {
-                if (*pattern != *subject) 
+                const char *pattern = *(patterns++);
+                const char *subject = pathname;
+                bool good = true;
+                while (*pattern && *subject)
                 {
-                    good = false;
+                    if (*pattern != *subject) 
+                    {
+                        good = false;
+                        break;
+                    }
+                    pattern++;
+                    subject++;
+                }
+                if (good)
+                {
+                    prefix_match = true;
                     break;
                 }
-                pattern++;
-                subject++;
             }
-            if (good)
+            */
+            prefix_match = true;
+            
+            if (prefix_match)
             {
-                prefix_match = true;
-                break;
-            }
-        }
-        
-        if (prefix_match)
-        {
-            pos = original_lseek(fd, 0, SEEK_SET);
-            printk("[diob_lkm] We just opened %s as FD %d. lseek says %zd.\n", pathname, fd, pos);
-            if (pos == 0)
-            {
-                // it's seekable and an interesting path, we'll watch it
-                fd_watcher[fd].watch_this = true;
-                printk("[diob_lkm] We'll be watching that FD %d.\n", fd);
+                hash_watcher[hash].file_pointer = _file;
+                printk("[diob_lkm] hook_open(%s) - now watching (hash %04x).\n", pathname, hash);
             }
         }
     }
@@ -180,47 +223,86 @@ asmlinkage int hook_open(const char* pathname, int flags, int mode)
 
 asmlinkage int hook_close(int fd)
 {
-    if (fd >= 0 && fd < MAX_FD && fd_watcher[fd].watch_this)
-        reset_watcher(fd);
+    struct file* _file;
+    unsigned short hash;
+    
+    rcu_read_lock();
+    _file = fcheck_files(current->files, fd);
+    rcu_read_unlock();
+    
+    if (_file)
+    {
+        hash = crc16_from_pointer(_file);
+        if (hash_watcher[hash].file_pointer == _file)
+        {
+            printk("[%04x] int hook_close(fd = %d)\n", hash, fd);
+            reset_watcher(hash);
+        }
+    }
+    
     return original_close(fd);
 }
 
 asmlinkage off_t hook_lseek(int fd, off_t offset, int whence)
 {
-    if (fd >= 0 && fd < MAX_FD && fd_watcher[fd].watch_this)
-        reset_watcher(fd);
+    struct file* _file;
+    unsigned short hash;
+    
+    rcu_read_lock();
+    _file = fcheck_files(current->files, fd);
+    rcu_read_unlock();
+    
+    if (_file)
+    {
+        hash = crc16_from_pointer(_file);
+        if (hash_watcher[hash].file_pointer == _file)
+        {
+            printk("[%04x] int hook_lseek(fd = %d, offset = %zd, whence = %d)\n", hash, fd, offset, whence);
+            reset_watcher(hash);
+        }
+    }
+    
     return original_lseek(fd, offset, whence);
 }
 
 asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
 {
-//     off_t old_file_pos;
-//     ssize_t bytes_read;
+    struct file* _file;
+    unsigned short hash;
     
-    if (fd >= 0 && fd < MAX_FD && fd_watcher[fd].watch_this)
+    rcu_read_lock();
+    _file = fcheck_files(current->files, fd);
+    rcu_read_unlock();
+    
+    if (!_file)
+        return original_read(fd, buf, count);
+
+    hash = crc16_from_pointer(_file);
+    
+    if (hash_watcher[hash].file_pointer == _file)
     {
-        if (!fd_watcher[fd].accelerator)
+        // we're watching this file!
+        if (!hash_watcher[hash].accelerator)
         {
             // there's no accelerator for this file descriptor yet
             if (count < MAX_READ_SIZE)
             {
                 // it's a short read
-                if (fd_watcher[fd].small_read_count < TRIGGER_COUNT)
+                if (hash_watcher[hash].small_read_count < TRIGGER_COUNT)
                 {
                     // we still haven't triggered
-                    fd_watcher[fd].small_read_count += 1;
-                    if (fd_watcher[fd].small_read_count == TRIGGER_COUNT)
+                    hash_watcher[hash].small_read_count += 1;
+                    if (hash_watcher[hash].small_read_count == TRIGGER_COUNT)
                     {
-                        printk("[diob_lkm] There's an awful lot of reading going on for FD %d. Current read size is %zd.\n", fd, count);
+                        printk("[diob_lkm] There's an awful lot of reading going on for hash %04x. Current read size is %zd.\n", hash, count);
                         if (accelerator_count < MAX_ACCELERATORS)
                         {
                             r_fd_accelerator* temp_accelerator;
                             // add another accelerator
-                            printk("sizeof(r_fd_accelerator) is %zd bytes.\n", sizeof(r_fd_accelerator));
                             temp_accelerator = vmalloc(sizeof(r_fd_accelerator));
                             if (temp_accelerator)
                             {
-                                temp_accelerator->buffer_size = 4096 * 1024;
+                                temp_accelerator->buffer_size = BUFFER_SIZE_IN_KILOBYTES * 1024;
                                 temp_accelerator->buffer_length = 0;
                                 temp_accelerator->buffer_offset = 0;
                                 temp_accelerator->buffer = vmalloc(temp_accelerator->buffer_size);
@@ -236,11 +318,13 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                                     bytes_read = original_read(fd, temp_accelerator->buffer, temp_accelerator->buffer_size);
                                     set_fs(fs);
                                     
-                                    fd_watcher[fd].accelerator = temp_accelerator;
-                                    accelerator_count += 1;
-                                    printk("[diob_lkm] Added an accelerator for FD %d, buffer %p.\n", fd, temp_accelerator->buffer);
+                                    // TODO: bytes_read might be 0 or negative
                                     
-                                    printk("We just filled the buffer with %zd bytes.\n", bytes_read);
+                                    hash_watcher[hash].accelerator = temp_accelerator;
+                                    accelerator_count += 1;
+                                    printk("[diob_lkm] Added an accelerator for hash %04x, buffer %p.\n", hash, temp_accelerator->buffer);
+                                    
+                                    printk("We just filled the hash %04x buffer with %zd bytes.\n", hash, bytes_read);
                                     
                                     original_lseek(fd, -bytes_read, SEEK_CUR);
                                     
@@ -255,29 +339,18 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                                 }
                             }
                         }
-//                         old_file_pos = original_lseek(fd, 0, SEEK_CUR);
-//                         disable_page_protection();
-//                         fs = get_fs();
-//                         set_fs(get_ds());
-//                         bytes_read = original_read(fd, buffer, 4096 * 1024);
-//                         set_fs(fs);
-//                         enable_page_protection();
-//                         if (bytes_read < 0)
-//                             printk("[diob_lkm] Hm, there appears to be an error: %d\n", bytes_read);
-//                         else
-//                             printk("[diob_lkm] I just read %zd bytes!\n", bytes_read);
-//                         original_lseek(fd, old_file_pos, SEEK_SET);
                     }
                 }
             }
             else
             {
-                reset_watcher(fd);
+                reset_watcher(hash);
             }
         }
-        if (fd_watcher[fd].accelerator)
+        
+        if (hash_watcher[hash].accelerator)
         {
-            r_fd_accelerator* a = fd_watcher[fd].accelerator;
+            r_fd_accelerator* a = hash_watcher[hash].accelerator;
             int loop;
             
             for (loop = 0; loop < 2; loop++)
@@ -323,16 +396,22 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                     if (bytes_read == 0)
                     {
                         printk("Stopping buffering now, EOF.\n");
-                        reset_accelerator(a);
+//                         reset_accelerator(fd);
+                    }
+                    else if (bytes_read < 0)
+                    {
+                        printk("There was a reading error: %zd, passing it on.\n", bytes_read);
+                        return bytes_read;
+//                         reset_accelerator(fd);
                     }
                     else
                     {
-                        printk("We just re-filled the buffer with %zd bytes.\n", bytes_read);
+                        printk("We just re-filled the FD %d buffer with %zd bytes.\n", fd, bytes_read);
+                        original_lseek(fd, -bytes_read, SEEK_CUR);
+                        // TODO check return value of original_lseek
+                        a->buffer_length = bytes_read;
+                        a->buffer_offset = 0;
                     }
-                    original_lseek(fd, -bytes_read, SEEK_CUR);
-                    // TODO check return value of original_lseek
-                    a->buffer_length = bytes_read;
-                    a->buffer_offset = 0;
                 }
             }
         }
@@ -349,11 +428,15 @@ static int __init diob_init(void)
 {
     int i;
     
+    for (i = 0; i < MAX_HASH; i++)
+        init_watcher(i);
+    
     original_open = SYS_CALL_TABLE[__NR_open];
     original_close = SYS_CALL_TABLE[__NR_close];
     original_lseek = SYS_CALL_TABLE[__NR_lseek];
     original_read = SYS_CALL_TABLE[__NR_read];
     original_write = SYS_CALL_TABLE[__NR_write];
+    original_fstat = SYS_CALL_TABLE[__NR_fstat];
     
     disable_page_protection();
     SYS_CALL_TABLE[__NR_open] = hook_open;
@@ -364,9 +447,6 @@ static int __init diob_init(void)
     enable_page_protection();
     
     printk("[diob_lkm] Successfully set up I/O hooks.\n");
-    
-    for (i = 0; i < MAX_FD; i++)
-        init_watcher(i);
     
     return 0;
 }
