@@ -278,36 +278,62 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
         if (fd_watcher[fd].accelerator)
         {
             r_fd_accelerator* a = fd_watcher[fd].accelerator;
-            // there's already an accelerator
-            if (a->buffer_offset < a->buffer_length)
+            int loop;
+            
+            for (loop = 0; loop < 2; loop++)
             {
-                // return at most the number of requested bytes (maybe less)
-                ssize_t copy_bytes = count;
-                
-                if (copy_bytes + a->buffer_offset >= a->buffer_length)
-                    copy_bytes = a->buffer_length - a->buffer_offset;
-                /////////////////
-                copy_bytes -= 10;
-                if (copy_bytes < 0)
-                    copy_bytes = 0;
-                /////////////////
-                if (copy_bytes > 0)
+                // there's already an accelerator
+                if (a->buffer_offset < a->buffer_length)
                 {
-                    // don't serve 0 bytes from cache, it would mean early EOF
-                    printk("Now serving %zd bytes from the buffer...\n", copy_bytes);
-                    copy_to_user(buf, a->buffer + a->buffer_offset, copy_bytes);
-                    // TODO: check return value
-                    a->buffer_offset += copy_bytes;
+                    // return at most the number of requested bytes (maybe less)
+                    ssize_t copy_bytes = count;
                     
-                    // advance file offset
-                    original_lseek(fd, copy_bytes, SEEK_CUR);
-                    return copy_bytes;
+                    if (copy_bytes + a->buffer_offset >= a->buffer_length)
+                        copy_bytes = a->buffer_length - a->buffer_offset;
+                    if (copy_bytes < 0)
+                        copy_bytes = 0;
+                    if (copy_bytes > 0)
+                    {
+                        // don't serve 0 bytes from cache, it would mean early EOF
+    //                     printk("Now serving %zd bytes from the buffer...\n", copy_bytes);
+                        copy_to_user(buf, a->buffer + a->buffer_offset, copy_bytes);
+                        // TODO: check return value
+                        a->buffer_offset += copy_bytes;
+                        
+                        // advance file offset
+                        original_lseek(fd, copy_bytes, SEEK_CUR);
+                        return copy_bytes;
+                    }
                 }
-            }
-            else
-            {
-                // buffer is used up, let's call it a day for now...
-                reset_accelerator(fd);
+                
+                if (loop == 0)
+                {
+                    // we're still here, so fill up the buffer
+
+                    // buffer is used up, refill it
+                    mm_segment_t fs;
+                    ssize_t bytes_read = -1;
+
+                    // now fill the buffer
+                    fs = get_fs();
+                    set_fs(get_ds());
+                    bytes_read = original_read(fd, a->buffer, a->buffer_size);
+                    set_fs(fs);
+                    
+                    if (bytes_read == 0)
+                    {
+                        printk("Stopping buffering now, EOF.\n");
+                        reset_accelerator(a);
+                    }
+                    else
+                    {
+                        printk("We just re-filled the buffer with %zd bytes.\n", bytes_read);
+                    }
+                    original_lseek(fd, -bytes_read, SEEK_CUR);
+                    // TODO check return value of original_lseek
+                    a->buffer_length = bytes_read;
+                    a->buffer_offset = 0;
+                }
             }
         }
     }
