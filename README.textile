@@ -1,0 +1,17 @@
+h1. Dynamic I/O buffering (a Linux kernel module)
+
+h2. Introduction
+
+The idea of this module is to provide automatic buffering for I/O on Linux at the
+level of system calls.
+
+h2. Strategy
+
+Every process has a file descriptor table in which file descriptors are mapped to
+entries in the system-wide open file table. These pointers are converted into a 
+CRC-16 checksum, resulting in a maximum of 2^16 files being watched for I/O behaviour.
+
+h2. Todo
+
+- it is unclear what happens when the module is unloaded and hooked syscalls, 
+  especially read, are pending
