@@ -184,9 +184,9 @@ asmlinkage int hook_open(const char* pathname, int flags, int mode)
         {
             // file is a regular file and not too small
             bool prefix_match = false;
+            /*
             const char** patterns = PREFIXES;
         
-            /*
             while (*patterns)
             {
                 const char *pattern = *(patterns++);
