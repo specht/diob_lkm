@@ -302,11 +302,11 @@ static int setup_accelerator(hash_t hash, unsigned int buffer_size, int fd)
 
 asmlinkage int hook_open(const char* pathname, int flags, int mode)
 {
-    volatile struct file* _file;
-    volatile hash_t hash;
-    volatile mm_segment_t fs;
-    volatile struct stat _stat;
-    volatile long stat_result;
+    struct file* _file;
+    hash_t hash;
+    mm_segment_t fs;
+    struct stat _stat;
+    long stat_result;
     volatile long fd;
     
     fd = original_open(pathname, flags, mode);
