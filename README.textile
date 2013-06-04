@@ -26,8 +26,35 @@ h2. Implementation details
 There are three states a file can be in:
 
 * unwatched: This is the default.
-* watched: The transition from unwatched to watched happens on @open@ if the file meets certain requirements. A file is being watched if @hash_watcher[hash].file_pointer@ is equal to the file pointer referenced in the currently executing system call hook. If a hash slot is unused, its @file_pointer@ should be @NULL@.
+* watched: The transition from unwatched to watched happens in @open@ if the file meets certain requirements. A file is being watched if @hash_watcher[hash].file_pointer@ is equal to the file pointer referenced in the currently executing system call hook. If it's not @NULL@, but different from the current file pointer, there's a hash collision and your file is not invited to the party. If a hash slot is unused, its @file_pointer@ is @NULL@.
 * buffered: A file is being buffered if it is being watched and @hash_watcher[hash].accelerator@ is not @NULL@.
+
+At the beginning of every hook function, the 16 bit file hash is determined by looking at the file descriptor and the open file descriptor table of the current process.
+
+h3. @init@
+
+* clear all hash slots
+
+h3. @open@
+
+* if there's already a different file being watched on the same hash slot, return and do nothing
+* if the file is worth being watched, reset the hash watcher slot and set @hash_watcher[hash].file_pointer@ to out file pointer, thus marking the file as being watched
+
+h3. @close@
+
+* if the file is being watched, reset its watcher slot
+
+h3. @lseek@
+
+* if the file is being watched, rewind its watcher (reset stage and disable buffering)
+
+h3. Memory footprint
+
+In addition to the module code, there's a fixed minimum RAM usage of 1.5 MiB for the 64k hash watcher slots. 
+
+For every file which is buffered, a full page is allocated for every @r_fd_accelerator@ structure, which is 32 bytes. This means that 99% of the page is wasted. With @MAX_ACCELERATORS@ set to 256, this means that no more than 1.0 MiB is allocated for all accelerators, and we could reduce this number to 8 kb by replacding the call to @vmalloc@ with a simple fixed-size table. 
+
+By default, buffers come in three sizes: 256k, 1M and 4M, resulting in a maximum memory usage of 1 GiB for buffers if 256 files are buffered with 4M.
 
 h2. Results
 
@@ -52,3 +79,4 @@ h2. To do list
 ** by factor 32 (4k, 128k, 4M) or
 ** by factor 4 (4k, 16k, 64k, 256k, 1M, 4M)
 * re-think buffering activation strategy... is it good?
+* test and handle dup and dup2
