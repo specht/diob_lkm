@@ -4,7 +4,7 @@ The idea of this module is to provide automatic buffering for I/O on Linux at th
 
 h2. Results
 
-With the module loaded, a reduction in executing time to about 50% could be observed while running @sha1sum@ on a 100 MB file, roughly corresponding to the effect seen when using @dd@ with a large block size and piping its output to @sha1sum@. It is expected that this module will mitigate I/O problems on cluster file systems due to excessive amounts of I/O system calls resulting from small default buffer sizes. With the module loaded, the DDOS-like effects stay are mitigated before they reach the cluster file system.
+With the module loaded, a reduction in executing time to about 50% could be observed while running @sha1sum@ on a 100 MB file, roughly corresponding to the effect seen when using @dd@ with a large block size and piping its output to @sha1sum@. It is expected that this module will mitigate I/O problems on cluster file systems due to excessive amounts of I/O system calls resulting from small default buffer sizes. With the module loaded, the DDoS-like effects resulting from small default buffer sizes are mitigated before they reach the cluster file system.
 
 h2. Alternatives
 
