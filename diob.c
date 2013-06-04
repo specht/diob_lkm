@@ -556,6 +556,20 @@ default_read:
 
 asmlinkage ssize_t hook_write(int fd, const void *buf, size_t count)
 {
+    struct file* _file;
+    hash_t hash;
+    
+    rcu_read_lock();
+    _file = fcheck_files(current->files, fd);
+    rcu_read_unlock();
+    
+    if (_file)
+    {
+        hash = crc16_from_pointer(_file);
+        if (hash_watcher[hash].file_pointer == _file)
+            reset_watcher_stage(hash);
+    }
+    
     return original_write(fd, buf, count);
 }
 
