@@ -76,3 +76,4 @@ h2. To do list
 * add support for writing
 * test and handle dup and dup2
 * maybe don't bump buffer size until it's used up (otherwise, we could end up reading the same data multiple times)
+* if a process which opened a file dies, we won't notice that the file gets closed in background, thus piling up stale file watchers

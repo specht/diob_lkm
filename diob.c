@@ -10,6 +10,8 @@
 #undef __KERNEL__
 #define __KERNEL__
 
+#define DEBUG_LEVEL KERN_INFO
+
 #undef MODULE
 #define MODULE
 
@@ -182,7 +184,7 @@ static int setup_accelerator(hash_t hash, unsigned int buffer_size, int fd)
         // we already have enough accelerators, let's not hog the entire RAM
         return 0;
     
-    printk(KERN_DEBUG "[diob_lkm] [%04x] Now buffering with %d bytes.\n", hash, buffer_size);
+    printk(DEBUG_LEVEL "[diob_lkm] [%04x] Now buffering with %d bytes.\n", hash, buffer_size);
     
     temp_accelerator = vmalloc(sizeof(r_fd_accelerator));
     if (temp_accelerator)
@@ -295,7 +297,7 @@ asmlinkage int hook_open(const char* pathname, int flags, int mode)
             // file is a regular file and not too small
             reset_watcher(hash);
             hash_watcher[hash].file_pointer = _file;
-            printk(KERN_DEBUG "[diob_lkm] [%04x] hook_open(%s) - now watching this file.\n", hash, pathname);
+            printk(DEBUG_LEVEL "[diob_lkm] [%04x] hook_open(%s) - now watching this file.\n", hash, pathname);
         }
     }
     return fd;
@@ -315,7 +317,7 @@ asmlinkage int hook_close(int fd)
         hash = crc16_from_pointer(_file);
         if (hash_watcher[hash].file_pointer == _file)
         {
-            printk(KERN_DEBUG "[diob_lkm] [%04x] hook_close(fd = %d), no more watching this file.\n", hash, fd);
+            printk(DEBUG_LEVEL "[diob_lkm] [%04x] hook_close(fd = %d), no more watching this file.\n", hash, fd);
             reset_watcher(hash);
         }
     }
