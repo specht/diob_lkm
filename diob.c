@@ -31,6 +31,8 @@
 #include <linux/fdtable.h>
 #endif
 
+#define COLLECT_STATS
+
 MODULE_LICENSE("GPL");
 
 void ** SYS_CALL_TABLE = (void **)0xffffffff80296f40;
@@ -75,6 +77,7 @@ typedef struct _r_fd_accelerator r_fd_accelerator;
 typedef unsigned short hash_t;
 
 // this structure is 24 bytes big on a 64 bit machine
+// we need 64k of these entries, so it's 1.5 MB
 struct _r_hash_watcher
 {
     const void* file_pointer;
@@ -84,6 +87,9 @@ struct _r_hash_watcher
     r_fd_accelerator* accelerator;
     unsigned short stage;
     unsigned short small_read_count;
+#ifdef COLLECT_STATS
+    unsigned long free_read_calls;
+#endif
 };
 
 // this structure is 32 bytes big on a 64 bit machine
@@ -174,6 +180,9 @@ static void init_watcher(hash_t hash)
     hash_watcher[hash].stage  = 0;
     hash_watcher[hash].small_read_count = 0;
     hash_watcher[hash].accelerator = NULL;
+#ifdef COLLECT_STATS
+    hash_watcher[hash].free_read_calls = 0;
+#endif
 }
 
 static void reset_accelerator(hash_t hash)
@@ -196,11 +205,9 @@ static void reset_watcher(hash_t hash)
 {
     if (hash_watcher[hash].file_pointer)
     {
-        hash_watcher[hash].file_pointer = NULL;
-        hash_watcher[hash].stage = 0;
-        hash_watcher[hash].small_read_count = 0;
         if (hash_watcher[hash].accelerator)
             reset_accelerator(hash);
+        init_watcher(hash);
     }
 }
 
@@ -365,7 +372,11 @@ asmlinkage int hook_close(int fd)
         hash = crc16_from_pointer(_file);
         if (hash_watcher[hash].file_pointer == _file)
         {
-            printk(DEBUG_LEVEL "[diob_lkm] [%04x] hook_close(fd = %d), no more watching this file.\n", hash, fd);
+#ifdef COLLECT_STATS
+            printk(DEBUG_LEVEL "[diob_lkm] [%04x] hook_close(fd = %d), saved %ld read calls.\n", hash, fd, hash_watcher[hash].free_read_calls);
+#else
+            printk(DEBUG_LEVEL "[diob_lkm] [%04x] hook_close(fd = %d)\n", hash, fd);
+#endif
             reset_watcher(hash);
         }
     }
@@ -543,6 +554,9 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                     {
                         // there was an error, stop watching this file and
                         // pass lseek error on to user space
+#ifdef COLLECT_STATS
+                        hash_watcher[hash].free_read_calls++;
+#endif
                         reset_watcher(hash);
                         return (int)lseek_result;
                     }
