@@ -1,14 +1,25 @@
-h1. Dynamic I/O buffering (a Linux kernel module)
+h1. Dynamic I/O buffering (a loadable kernel module for Linux)
 
 h2. Introduction
 
-The idea of this module is to provide automatic buffering for I/O on Linux at the level of system calls. Files are being watched while they are read, and whenever it appears that a large file is read in many small chunks (which is the default behaviour of most libc-linked programs), a buffer of 4 MB is allocated in kernel memory, and file content gets pre-fetched.
+The idea of this module is to provide automatic buffering for I/O on Linux at the system call level. Files are being watched while they are read, and whenever it appears that a large file is read in many small chunks (which is the default behaviour of most libc-linked programs), a buffer of increasing size (256 kB, 1 MB, 4 MB) is allocated in kernel memory and used to store and return pre-fetched file content.
+
+h2. Results
+
+With the module loaded, a reduction in executing time to about 50% could be observed while running @sha1sum@ on a 100 MB file, roughly corresponding to the effect seen when using @dd@ with a large block size and piping its output to @sha1sum@. It is expected that this module will mitigate I/O problems on cluster file systems due to excessive amounts of I/O system calls resulting from small default buffer sizes. With the module loaded, the DDOS-like effects stay are mitigated before they reach the cluster file system.
+
+h2. Alternatives
+
+Writing a kernel module carries a great potential to mess a system up so bad it needs to be reset. There are a couple of possible alternatives:
+
+* the provided functionality could be implemented as patched gnulibc, but there are problems with the LD_PRELOAD approach: it's not working reliably. 
+* the file system driver could be patched to provide the same functionality
 
 h2. Strategy
 
-Every process has a _file descriptor table_ in which file descriptors are mapped to entries in the system-wide _open file table_. These open file table pointers are converted into a CRC-16 checksum ("the hash"), resulting in a maximum of 2^16 files being watched for I/O behaviour, and each file is managed internally via its hash.
+Every process has a _file descriptor table_ in which process-specific file descriptors are mapped to entries in the system-wide _open file table_. These open file table pointers are converted into a CRC-16 checksum ("the hash"), resulting in a maximum of 2^16 files being watched for I/O behaviour, and each file is managed internally via its hash.
 
-The hashing is necessary because different processes use the same file descriptors for different files and the open file table does not seem to be a table where each entry has an offset but file objects seem to be scattered throughout kernel memory, hence the hashing. CRC-16, when implemented with a reasonable polynomial, can be expected to uniformly distribute various pointer over a range of 64k slots. In the case of hash collision, the second file will not be handled by the module while handling for the first file continues.
+The hashing is necessary because different processes use the same file descriptors for different files (ruling out raw file descriptors as distinctive keys) and the open file table does not seem to be a table where each entry has an offset but file objects seem to be scattered throughout kernel memory, hence the pointer hashing. CRC-16, when implemented with a reasonable polynomial, can be expected to uniformly distribute various pointers over a range of 64k slots. In the case of hash collision, the second file will not be handled by the module while handling for the first file continues as if nothing happened.
 
 Whenever a file gets opened, a couple of checks are performed to determine whether the file should be watched:
 
@@ -17,9 +28,9 @@ Whenever a file gets opened, a couple of checks are performed to determine wheth
 
 If these tests pass, the file will be watched. The aim of these tests is to skip files which cannot be seeked and to discard most files for which additonal buffering wouldn't buy much.
 
-Whenever the @read@ system call is invoked for a watched file, a counter is increased every time a block of 64k or less is read (this is considered a _small read_). When this counter reaches 1024, buffering gets activated for the file. A 4 MB buffer is allocated in kernel memory, filled from the current file position and returned to user space in small chunks as requested. The buffer gets re-filled automatically whenever it is necessary. On every @read@ call which just returns data from the buffer instead actually performing a file system @read@, the file pointer is advanced as necessary via @lseek@ (which should only affect internal kernel data structures and result in no actual I/O), thus mimicking a default @read@ call.
+Whenever the @read@ system call is invoked for a watched file, a counter is increased every time a block of 64k or less is read (this is considered a _small read_). When this counter reaches 1024, buffering gets activated for the file. First, a 256 kB buffer is allocated in kernel memory, filled from the current file position and returned to user space in small chunks as requested. The buffer gets re-filled automatically whenever it is necessary. After 1024 more small reads, the buffer size is increased to 1 MB, and later to 4 MB. On every @read@ call which just returns data from the buffer instead actually performing a file system @read@, the file pointer is advanced as necessary via @lseek@ (which should only affect internal kernel data structures and result in no actual I/O), thus mimicking a default @read@ call.
 
-Any call to @open@, @close@, @lseek@ or @write@ will de-activate read buffering.
+Any call to @open@, @close@, @lseek@ or @write@ will de-activate read buffering. In the case of @lseek@, counting of small reads starts from the beginning.
 
 h2. Implementation details
 
@@ -52,31 +63,15 @@ h3. Memory footprint
 
 In addition to the module code, there's a fixed minimum RAM usage of 1.5 MiB for the 64k hash watcher slots. 
 
-For every file which is buffered, a full page is allocated for every @r_fd_accelerator@ structure, which is 32 bytes. This means that 99% of the page is wasted. With @MAX_ACCELERATORS@ set to 256, this means that no more than 1.0 MiB is allocated for all accelerators, and we could reduce this number to 8 kb by replacding the call to @vmalloc@ with a simple fixed-size table. 
+For every file which is buffered, a full page is allocated for every @r_fd_accelerator@ structure, which is only 32 bytes, while a page is 4096 bytes on most systems. This means that 99% of the page is wasted. With @MAX_ACCELERATORS@ set to 256, this means that no more than 1.0 MiB is allocated for all accelerators, and we could reduce this number to 8 kb by replacding the call to @vmalloc@ with a simple fixed-size table. 
 
-By default, buffers come in three sizes: 256k, 1M and 4M, resulting in a maximum memory usage of 1 GiB for buffers if 256 files are buffered with 4M.
-
-h2. Results
-
-With the module loaded, a reduction in executing time to about 50% could be observed while running sha1sum on a 100 MB file. It is expected that this module will mitigate I/O problems on cluster file systems due to excessive amounts of I/O system calls resulting from small default buffer sizes.
-
-h2. Alternatives
-
-Writing a kernel module carries a great potential to mess a system up so bad it needs to be reset. There are a couple of possible alternatives:
-
-* the provided functionality could be implemented as patched gnulibc, but there are problems with the LD_PRELOAD approach: it's not working reliably
-* the file system driver could be patched to provide the same functionality
+By default, buffers come in three sizes: 256k, 1M and 4M, resulting in a maximum memory usage of 1 GiB for buffers if 256 files are simultaneously buffered with 4M.
 
 h2. To do list
 
 * it is unclear what happens when the module is unloaded and hooked syscalls, especially reads, are still pending
 * it is unclear what happens when a system call hook is interrupted and restarted (especially when a buffer is allocated in the read hook)
 * don't use vmalloc() to allocate accelerators, manage a fixed array of accelerator slots to save memory
-* determine memory footprint
-* properly handle all return values
 * add support for writing
-* grow the buffer over time up to a maximum size: 
-** by factor 32 (4k, 128k, 4M) or
-** by factor 4 (4k, 16k, 64k, 256k, 1M, 4M)
-* re-think buffering activation strategy... is it good?
 * test and handle dup and dup2
+* maybe don't bump buffer size until it's used up (otherwise, we could end up reading the same data multiple times)
