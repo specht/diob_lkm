@@ -14,14 +14,20 @@
 #define MODULE
 
 #include <asm/cacheflush.h>
-#include <asm/semaphore.h>
 #include <asm/uaccess.h>
 #include <linux/file.h>
+#include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/sched.h>
 #include <linux/unistd.h>
 #include <linux/vmalloc.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+#include <linux/fdtable.h>
+#endif
 
 #include "crc16.h"
 
