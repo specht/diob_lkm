@@ -48,8 +48,8 @@ asmlinkage int (*original_fstat) (int, struct stat*);
 // a file must be at least this big to be watched
 #define MIN_FILE_SIZE 16777216
 
-// every read smaller or equal to this is considered a small read
-#define MAX_READ_SIZE 65536
+// every read smaller than this is considered a small read
+#define MAX_READ_SIZE 131072
 
 // allocate no more than this many accelerators
 #define MAX_ACCELERATORS 256
@@ -414,7 +414,7 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
     if (hash_watcher[hash].file_pointer == _file)
     {
         // we're watching this file!
-        if (count <= MAX_READ_SIZE)
+        if (count < MAX_READ_SIZE)
         {
             // this is a small read, now increase small_read_count and maybe bump stage, too
             if (hash_watcher[hash].stage < STAGE_THRESHOLD_COUNT)

@@ -6,7 +6,7 @@ This module has been developed and tested on Cent OS 5.5 with a Linux 2.6.18-348
 
 h2. Results
 
-With the module loaded, a reduction in executing time to about 50% could be observed while running @sha1sum@ on a 100 MB file, roughly corresponding to the effect seen when using @dd@ with a large block size and piping its output to @sha1sum@. It is expected that this module will mitigate I/O problems on cluster file systems due to excessive amounts of I/O system calls resulting from small default buffer sizes. With the module loaded, the DDoS-like effects resulting from small default buffer sizes are mitigated before they reach the cluster file system.
+With the module loaded in a VirtualBox, a reduction in executing time to about 50% could be observed while running @sha1sum@ on a 100 MB file, roughly corresponding to the effect seen when using @dd@ with a large block size and piping its output to @sha1sum@. Without virtualization, the effect is minimal. However, it is expected that this module will mitigate I/O problems on cluster file systems due to excessive amounts of I/O system calls resulting from small default buffer sizes. With the module loaded, the DDoS-like effects resulting from small default buffer sizes are mitigated before they reach the cluster file system.
 
 h2. Alternatives
 
@@ -29,7 +29,7 @@ Whenever a file gets opened, a couple of checks are performed to determine wheth
 
 If these tests pass, the file will be watched. The aim of these tests is to skip files which cannot be seeked and to discard most files for which additonal buffering wouldn't buy much.
 
-Whenever the @read@ system call is invoked for a watched file, a counter is increased every time a block of 64k or less is read (this is considered a _small read_). When this counter reaches 1024, buffering gets activated for the file. First, a 256 kB buffer is allocated in kernel memory, filled from the current file position and returned to user space in small chunks as requested. The buffer gets re-filled automatically whenever it is necessary. After 1024 more small reads, the buffer size is increased to 1 MB, and later to 4 MB. On every @read@ call which just returns data from the buffer instead actually performing a file system @read@, the file pointer is advanced as necessary via @lseek@ (which should only affect internal kernel data structures and result in no actual I/O), thus mimicking a default @read@ call.
+Whenever the @read@ system call is invoked for a watched file, a counter is increased every time a block smaller than 128k is read (this is considered a _small read_). When this counter reaches 1024, buffering gets activated for the file. First, a 256 kB buffer is allocated in kernel memory, filled from the current file position and returned to user space in small chunks as requested. The buffer gets re-filled automatically whenever it is necessary. After 1024 more small reads, the buffer size is increased to 1 MB, and later to 4 MB. On every @read@ call which just returns data from the buffer instead actually performing a file system @read@, the file pointer is advanced as necessary via @lseek@ (which should only affect internal kernel data structures and result in no actual I/O), thus mimicking a default @read@ call.
 
 Any call to @open@, @close@, @lseek@ or @write@ will de-activate read buffering. In the case of @lseek@, counting of small reads starts from the beginning.
 
@@ -56,7 +56,7 @@ h3. @close@
 
 * if the file is being watched, reset its watcher slot
 
-h3. @lseek@
+h3. @lseek@ and @write@
 
 * if the file is being watched, rewind its watcher (reset stage and disable buffering)
 
