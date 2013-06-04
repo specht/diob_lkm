@@ -67,7 +67,7 @@ static unsigned int STAGE_THRESHOLDS[STAGE_THRESHOLD_COUNT][2] = {
     {1024, 256},
     {1024, 1024},
     {1024, 4096}
-}; 
+};
 
 
 typedef struct _r_hash_watcher r_hash_watcher;
