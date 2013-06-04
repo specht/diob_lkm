@@ -554,12 +554,12 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                     {
                         // there was an error, stop watching this file and
                         // pass lseek error on to user space
-#ifdef COLLECT_STATS
-                        hash_watcher[hash].free_read_calls++;
-#endif
                         reset_watcher(hash);
                         return (int)lseek_result;
                     }
+#ifdef COLLECT_STATS
+                        hash_watcher[hash].free_read_calls++;
+#endif
                     return copy_bytes;
                 }
             }
