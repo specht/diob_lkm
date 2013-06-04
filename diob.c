@@ -210,6 +210,8 @@ static void reset_watcher_stage(hash_t hash)
 {
     if (hash_watcher[hash].file_pointer)
     {
+        printk(DEBUG_LEVEL "[diob_lkm] [%04x] Rewinding watcher, was at stage %d, small_read_count %d.\n",
+               hash, hash_watcher[hash].stage, hash_watcher[hash].small_read_count);
         hash_watcher[hash].stage = 0;
         hash_watcher[hash].small_read_count = 0;
         if (hash_watcher[hash].accelerator)
@@ -404,7 +406,7 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
     rcu_read_unlock();
     
     if (!_file)
-        return original_read(fd, buf, count);
+        goto default_read;
 
     hash = crc16_from_pointer(_file);
     
