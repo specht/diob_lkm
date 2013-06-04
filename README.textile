@@ -1,5 +1,3 @@
-h1. Dynamic I/O buffering (a loadable kernel module for Linux)
-
 h2. Introduction
 
 The idea of this module is to provide automatic buffering for I/O on Linux at the system call level. Files are being watched while they are read, and whenever it appears that a large file is read in many small chunks (which is the default behaviour of most libc-linked programs), a buffer of increasing size (256 kB, 1 MB, 4 MB) is allocated in kernel memory and used to store and return pre-fetched file content.
