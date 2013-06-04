@@ -176,7 +176,7 @@ static int setup_accelerator(hash_t hash, unsigned int buffer_size, int fd)
         // we already have enough accelerators, let's not hog the entire RAM
         return 0;
     
-    printk("Now buffering %04x with %d bytes.\n", hash, buffer_size);
+    printk(KERN_DEBUG "[diob_lkm] [%04x] Now buffering with %d bytes.\n", hash, buffer_size);
     
     temp_accelerator = vmalloc(sizeof(r_fd_accelerator));
     if (temp_accelerator)
@@ -217,8 +217,6 @@ static int setup_accelerator(hash_t hash, unsigned int buffer_size, int fd)
                 // TODO: Is it true that read() will return 0 twice at EOF?
                 return 0;
             }
-            
-//             printk("We just filled the hash %04x buffer with %zd bytes.\n", hash, bytes_read);
             
             lseek_result = original_lseek(fd, -bytes_read, SEEK_CUR);
             if (lseek_result < 0)
@@ -290,7 +288,7 @@ asmlinkage int hook_open(const char* pathname, int flags, int mode)
             // file is a regular file and not too small
             reset_watcher(hash);
             hash_watcher[hash].file_pointer = _file;
-            printk("[diob_lkm] hook_open(%s) - now watching (hash %04x).\n", pathname, hash);
+            printk(KERN_DEBUG "[diob_lkm] [%04x] hook_open(%s) - now watching this file.\n", hash, pathname);
         }
     }
     return fd;
@@ -310,7 +308,7 @@ asmlinkage int hook_close(int fd)
         hash = crc16_from_pointer(_file);
         if (hash_watcher[hash].file_pointer == _file)
         {
-            printk("[%04x] int hook_close(fd = %d)\n", hash, fd);
+            printk(KERN_DEBUG "[diob_lkm] [%04x] hook_close(fd = %d), no more watching this file.\n", hash, fd);
             reset_watcher(hash);
         }
     }
@@ -331,10 +329,7 @@ asmlinkage off_t hook_lseek(int fd, off_t offset, int whence)
     {
         hash = crc16_from_pointer(_file);
         if (hash_watcher[hash].file_pointer == _file)
-        {
-            printk("[%04x] int hook_lseek(fd = %d, offset = %zd, whence = %d)\n", hash, fd, offset, whence);
             reset_watcher_stage(hash);
-        }
     }
     
     return original_lseek(fd, offset, whence);
@@ -437,7 +432,6 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                 else
                 {
                     off_t lseek_result;
-//                     printk("We just re-filled the FD %d buffer with %zd bytes.\n", fd, bytes_read);
                     lseek_result = original_lseek(fd, -bytes_read, SEEK_CUR);
                     if (lseek_result < 0)
                     {
@@ -531,7 +525,7 @@ static int __init diob_init(void)
     SYS_CALL_TABLE[__NR_write] = hook_write;
     enable_page_protection();
     
-    printk("[diob_lkm] Successfully set up I/O hooks.\n");
+    printk(KERN_INFO "[diob_lkm] Successfully set up I/O hooks.\n");
     
     return 0;
 }
@@ -548,11 +542,11 @@ static void __exit diob_cleanup(void)
     SYS_CALL_TABLE[__NR_write] = original_write;
     enable_page_protection();
     
-    printk("[diob_lkm] Shutting down with %d accelerators, now releasing memory.\n", accelerator_count);
+    printk(KERN_INFO "[diob_lkm] Shutting down with %d accelerators, now releasing memory.\n", accelerator_count);
     for (i = 0; i < MAX_HASH; i++)
         reset_watcher(i);    
     
-    printk("[diob_lkm] Successfully restored I/O hooks.\n");
+    printk(KERN_INFO "[diob_lkm] Successfully restored I/O hooks.\n");
 }
 
 module_init(diob_init);
