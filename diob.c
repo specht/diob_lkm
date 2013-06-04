@@ -282,8 +282,9 @@ asmlinkage int hook_open(const char* pathname, int flags, int mode)
         // stat was successful
         off_t filesize = _stat.st_size;
         bool is_regular_file = S_ISREG(_stat.st_mode);
+        bool file_belongs_to_root = _stat.st_uid == 0;
         
-        if (is_regular_file && filesize >= MIN_FILE_SIZE)
+        if (!file_belongs_to_root && is_regular_file && filesize >= MIN_FILE_SIZE)
         {
             // file is a regular file and not too small
             reset_watcher(hash);

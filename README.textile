@@ -23,7 +23,8 @@ The hashing is necessary because different processes use the same file descripto
 
 Whenever a file gets opened, a couple of checks are performed to determine whether the file should be watched:
 
-* it must be a regular file as per fstat()
+* the owner of the file must not be root
+* it must be a regular file
 * it must have a minimum size of 16 MB
 
 If these tests pass, the file will be watched. The aim of these tests is to skip files which cannot be seeked and to discard most files for which additonal buffering wouldn't buy much.
