@@ -8,7 +8,7 @@ h2. Strategy
 
 Every process has a _file descriptor table_ in which file descriptors are mapped to entries in the system-wide _open file table_. These open file table pointers are converted into a CRC-16 checksum ("the hash"), resulting in a maximum of 2^16 files being watched for I/O behaviour, and each file is managed internally via its hash.
 
-The hashing is necessary because different processes use the same file descriptors for different files and the open file table does not seem to be a table where each entry has an offset but file objects seem to be scattered throughout kernel memory, hence the hashing. CRC-16, when implemented with a reasonable polynomial, can be expected to uniformly distribute various pointer over a range of 64k slots.
+The hashing is necessary because different processes use the same file descriptors for different files and the open file table does not seem to be a table where each entry has an offset but file objects seem to be scattered throughout kernel memory, hence the hashing. CRC-16, when implemented with a reasonable polynomial, can be expected to uniformly distribute various pointer over a range of 64k slots. In the case of hash collision, the second file will not be handled by the module while handling for the first file continues.
 
 Whenever a file gets opened, a couple of checks are performed to determine whether the file should be watched:
 
@@ -20,6 +20,14 @@ If these tests pass, the file will be watched. The aim of these tests is to skip
 Whenever the @read@ system call is invoked for a watched file, a counter is increased every time a block of 64k or less is read (this is considered a _small read_). When this counter reaches 1024, buffering gets activated for the file. A 4 MB buffer is allocated in kernel memory, filled from the current file position and returned to user space in small chunks as requested. The buffer gets re-filled automatically whenever it is necessary. On every @read@ call which just returns data from the buffer instead actually performing a file system @read@, the file pointer is advanced as necessary via @lseek@ (which should only affect internal kernel data structures and result in no actual I/O), thus mimicking a default @read@ call.
 
 Any call to @open@, @close@, @lseek@ or @write@ will de-activate read buffering.
+
+h2. Implementation details
+
+There are three states a file can be in:
+
+* unwatched: This is the default.
+* watched: The transition from unwatched to watched happens on @open@ if the file meets certain requirements. A file is being watched if @hash_watcher[hash].file_pointer@ is equal to the file pointer referenced in the currently executing system call hook. If a hash slot is unused, its @file_pointer@ should be @NULL@.
+* buffered: A file is being buffered if it is being watched and @hash_watcher[hash].accelerator@ is not @NULL@.
 
 h2. Results
 
@@ -35,11 +43,12 @@ Writing a kernel module carries a great potential to mess a system up so bad it 
 h2. To do list
 
 * it is unclear what happens when the module is unloaded and hooked syscalls, especially reads, are still pending
+* it is unclear what happens when a system call hook is interrupted and restarted (especially when a buffer is allocated in the read hook)
 * don't use vmalloc() to allocate accelerators, manage a fixed array of accelerator slots to save memory
 * determine memory footprint
 * properly handle all return values
 * add support for writing
 * grow the buffer over time up to a maximum size: 
-  ** by factor 32 (4k, 128k, 4M) or
-  ** by factor 4 (4k, 16k, 64k, 256k, 1M, 4M)
+** by factor 32 (4k, 128k, 4M) or
+** by factor 4 (4k, 16k, 64k, 256k, 1M, 4M)
 * re-think buffering activation strategy... is it good?

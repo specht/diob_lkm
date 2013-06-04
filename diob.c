@@ -5,8 +5,6 @@
  * grep " sys_call_table" /boot/System.map-`uname -r`
  * and set SYS_CALL_TABLE accordingly.
  * 
- * Also, this module cannot be safely unloaded because it is probable that someone
- * is currently in our read hook while we unload the module.
  */
 
 #undef __KERNEL__
@@ -38,33 +36,22 @@ asmlinkage ssize_t (*original_read) (int, void*, size_t);
 asmlinkage ssize_t (*original_write) (int, const void*, size_t);
 asmlinkage int (*original_fstat) (int, struct stat*);
 
-// #define MAX_FD 256
 #define MAX_HASH 0x10000
-#define TRIGGER_COUNT 1024
+#define MIN_FILE_SIZE 16777216
 #define MAX_READ_SIZE 65536
+#define TRIGGER_COUNT 1024
 #define MAX_ACCELERATORS 256
 #define BUFFER_SIZE_IN_KILOBYTES 4096
-#define MIN_FILE_SIZE 16777216
 
-// typedef struct _r_fd_watcher r_fd_watcher;
 typedef struct _r_hash_watcher r_hash_watcher;
 typedef struct _r_fd_accelerator r_fd_accelerator;
 typedef unsigned short hash_t;
-
-/*
-struct _r_fd_watcher
-{
-    bool watch_this;
-    unsigned short small_read_count;
-    r_fd_accelerator* accelerator;
-};
-*/
 
 struct _r_hash_watcher
 {
     void* file_pointer;
     // TODO: This is cosy, but it wastes a lot of space because a full page
-    // is probably allocated on ever vmalloc() call
+    // is probably allocated on every vmalloc() call
     r_fd_accelerator* accelerator;
     unsigned short small_read_count;
 };
@@ -77,13 +64,14 @@ struct _r_fd_accelerator
     void *buffer;
 };
 
-// static r_fd_watcher fd_watcher[MAX_FD];
 static r_hash_watcher hash_watcher[MAX_HASH];
 static unsigned int accelerator_count = 0;
+
 static const char* PREFIXES[] = {
     "/media", 
     "/home", 
-    NULL}; // NULL is required at the end to stop processing
+    NULL      // NULL is required at the end to stop processing
+}; 
     
 
 static void disable_page_protection(void) 
@@ -115,10 +103,9 @@ static void init_watcher(hash_t hash)
     hash_watcher[hash].accelerator = NULL;
 }
 
-
 static void reset_accelerator(hash_t hash)
 {
-//     printk("void reset_accelerator(fd = %d)\n", fd);
+    printk("void reset_accelerator(hash = %04x)\n", hash);
     if (hash_watcher[hash].accelerator)
     {
         if (hash_watcher[hash].accelerator->buffer)
@@ -133,7 +120,7 @@ static void reset_accelerator(hash_t hash)
 
 static void reset_watcher(hash_t hash)
 {
-//     printk("void reset_watcher(fd = %d)\n", fd);
+    printk("void reset_watcher(hash = %04x)\n", hash);
     if (hash_watcher[hash].file_pointer)
     {
         printk("Now resetting watcher for hash %04x.\n", hash);
@@ -150,7 +137,7 @@ static void reset_watcher(hash_t hash)
 asmlinkage int hook_open(const char* pathname, int flags, int mode)
 {
     struct file* _file;
-    unsigned short hash;
+    hash_t hash;
     struct stat _stat;
     mm_segment_t fs;
     int stat_result;
@@ -184,6 +171,7 @@ asmlinkage int hook_open(const char* pathname, int flags, int mode)
         {
             // file is a regular file and not too small
             bool prefix_match = false;
+            
             /*
             const char** patterns = PREFIXES;
         
@@ -224,7 +212,7 @@ asmlinkage int hook_open(const char* pathname, int flags, int mode)
 asmlinkage int hook_close(int fd)
 {
     struct file* _file;
-    unsigned short hash;
+    hash_t hash;
     
     rcu_read_lock();
     _file = fcheck_files(current->files, fd);
@@ -246,7 +234,7 @@ asmlinkage int hook_close(int fd)
 asmlinkage off_t hook_lseek(int fd, off_t offset, int whence)
 {
     struct file* _file;
-    unsigned short hash;
+    hash_t hash;
     
     rcu_read_lock();
     _file = fcheck_files(current->files, fd);
@@ -268,7 +256,7 @@ asmlinkage off_t hook_lseek(int fd, off_t offset, int whence)
 asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
 {
     struct file* _file;
-    unsigned short hash;
+    hash_t hash;
     
     rcu_read_lock();
     _file = fcheck_files(current->files, fd);
@@ -367,8 +355,7 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                         copy_bytes = 0;
                     if (copy_bytes > 0)
                     {
-                        // don't serve 0 bytes from cache, it would mean early EOF
-    //                     printk("Now serving %zd bytes from the buffer...\n", copy_bytes);
+                        // don't serve 0 bytes from cache, it would mean EOF
                         copy_to_user(buf, a->buffer + a->buffer_offset, copy_bytes);
                         // TODO: check return value
                         a->buffer_offset += copy_bytes;
