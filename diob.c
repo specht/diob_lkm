@@ -6,7 +6,7 @@
 #undef __KERNEL__
 #define __KERNEL__
 
-#define DEBUG_LEVEL KERN_INFO
+#define DEBUG_LEVEL KERN_DEBUG
 
 #undef MODULE
 #define MODULE
