@@ -4,3 +4,5 @@ Module.*
 *.mod.c
 .diob*
 .tmp_versions
+sys_call_table.h
+

@@ -1,10 +1,6 @@
 /*
- * ATTENTION: In order for this to work, we need the address of the system call table/
- *
- * Find out with:
- * grep " sys_call_table" /boot/System.map-`uname -r`
- * and set SYS_CALL_TABLE accordingly.
- *
+ * Note: Before you can compile this, you need to follow the
+ * instructions in sys_call_table.template.h.
  */
 
 #undef __KERNEL__
@@ -35,7 +31,7 @@
 
 MODULE_LICENSE("GPL");
 
-void ** SYS_CALL_TABLE = (void **)0xffffffff80296f40;
+#include "sys_call_table.h"
 
 asmlinkage int (*original_open) (const char*, int, int);
 asmlinkage int (*original_close) (int);
@@ -591,6 +587,12 @@ asmlinkage ssize_t hook_write(int fd, const void *buf, size_t count)
 static int __init diob_init(void)
 {
     int i;
+    
+    if (!SYS_CALL_TABLE)
+    {
+        printk(KERN_INFO "[diob_lkm] Unable to load module because SYS_CALL_TABLE is not set.\n");
+        return 1;
+    }
     
     for (i = 0; i < MAX_HASH; i++)
         init_watcher(i);

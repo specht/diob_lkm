@@ -68,6 +68,10 @@ For every file which is buffered, a full page is allocated for every @r_fd_accel
 
 By default, buffers come in three sizes: 256k, 1M and 4M, resulting in a maximum memory usage of 1 GiB for buffers if 256 files are simultaneously buffered with 4M.
 
+h2. Installation
+
+Before you can compile the module, you must save @sys_call_table.template.h@ as @sys_call_table.h@ ad set @SYS_CALL_TABLE@ to the correct value. Now type @make@.
+
 h2. To do list
 
 * it is unclear what happens when the module is unloaded and hooked syscalls, especially reads, are still pending
