@@ -70,7 +70,7 @@ By default, buffers come in three sizes: 256k, 1M and 4M, resulting in a maximum
 
 h2. Installation
 
-Before you can compile the module, you must save @sys_call_table.template.h@ as @sys_call_table.h@ ad set @SYS_CALL_TABLE@ to the correct value. Now type @make@.
+Before you can compile the module, you must save @sys_call_table.template.h@ as @sys_call_table.h@ and set @SYS_CALL_TABLE@ to the correct value. Now type @make@.
 
 h2. To do list
 
