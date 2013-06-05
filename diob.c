@@ -403,7 +403,11 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
 {
     struct file* _file;
     hash_t hash;
+    ssize_t read_result;
     
+    // increase use count
+    try_module_get(THIS_MODULE);
+
     // I know, size_t shouldn't be negative, but this ensures that counts
     // is positive and at least 1.
     if (count < 1)
@@ -450,7 +454,11 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                             // ENXIO: We don't use no SEEK_DATA or SEEK_HOLE, it can't happen.
                             // Bottom line: It is ok to return the error code.
                             if (result < 0)
+                            {
+                                // decrease use count
+                                module_put(THIS_MODULE);
                                 return result;
+                            }
                         }
                     }
                 }
@@ -491,6 +499,10 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                     // there was an error, stop watching this file and
                     // pass reading error on to user space
                     reset_watcher(hash);
+                    
+                    // decrease use count
+                    module_put(THIS_MODULE);
+                    
                     return bytes_read;
                 }
                 else
@@ -502,6 +514,10 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                         // there was an error, stop watching this file and
                         // pass lseek error on to user space
                         reset_watcher(hash);
+                        
+                        // decrease use count
+                        module_put(THIS_MODULE);
+                        
                         return (int)lseek_result;
                     }
                     a->buffer_length = bytes_read;
@@ -551,25 +567,41 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                         // there was an error, stop watching this file and
                         // pass lseek error on to user space
                         reset_watcher(hash);
+                        
+                        // decrease use count
+                        module_put(THIS_MODULE);
+                        
                         return (int)lseek_result;
                     }
 #ifdef COLLECT_STATS
                         hash_watcher[hash].free_read_calls++;
 #endif
+                    // decrease use count
+                    module_put(THIS_MODULE);
+                    
                     return copy_bytes;
                 }
             }
         }
     }
 default_read:
-    return original_read(fd, buf, count);
+    read_result = original_read(fd, buf, count);
+    
+    // decrease use count
+    module_put(THIS_MODULE);
+    
+    return read_result;
 }
 
 asmlinkage ssize_t hook_write(int fd, const void *buf, size_t count)
 {
     struct file* _file;
     hash_t hash;
+    ssize_t write_result;
     
+    // increase use count
+    try_module_get(THIS_MODULE);
+
     rcu_read_lock();
     _file = fcheck_files(current->files, fd);
     rcu_read_unlock();
@@ -581,7 +613,12 @@ asmlinkage ssize_t hook_write(int fd, const void *buf, size_t count)
             reset_watcher_stage(hash);
     }
     
-    return original_write(fd, buf, count);
+    write_result = original_write(fd, buf, count);
+    
+    // decrease use count
+    module_put(THIS_MODULE);
+    
+    return write_result;
 }
 
 static int __init diob_init(void)
