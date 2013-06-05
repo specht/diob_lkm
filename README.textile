@@ -81,3 +81,5 @@ h2. To do list
 * test and handle dup and dup2
 * maybe don't bump buffer size until it's used up (otherwise, we could end up reading the same data multiple times)
 * if a process which opened a file dies, we won't notice that the file gets closed in background, thus piling up stale file watchers
+* there are many ways a file can be manipulated, don't assume we know the file position for example, query it inside the read function, don't rely on data remaining consistent between system calls
+* Are the hooks thread safe? Probably, but maybe not yet.
