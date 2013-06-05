@@ -27,8 +27,6 @@
 #include <linux/fdtable.h>
 #endif
 
-#define COLLECT_STATS
-
 MODULE_LICENSE("GPL");
 
 #include "sys_call_table.h"
@@ -83,9 +81,6 @@ struct _r_hash_watcher
     r_fd_accelerator* accelerator;
     unsigned short stage;
     unsigned short small_read_count;
-#ifdef COLLECT_STATS
-    unsigned long free_read_calls;
-#endif
 };
 
 // this structure is 32 bytes big on a 64 bit machine
@@ -100,6 +95,7 @@ struct _r_fd_accelerator
 // this structure uses 24 * 65536 bytes = 1.5 MiB in RAM
 static r_hash_watcher hash_watcher[MAX_HASH];
 static unsigned int accelerator_count = 0;
+static unsigned long int free_read_calls = 0;
 
 unsigned short crc16_table[256] = {
     0x0000, 0xdc77, 0x2837, 0xf440, 0x506e, 0x8c19, 0x7859, 0xa42e,
@@ -176,9 +172,6 @@ static void init_watcher(hash_t hash)
     hash_watcher[hash].stage  = 0;
     hash_watcher[hash].small_read_count = 0;
     hash_watcher[hash].accelerator = NULL;
-#ifdef COLLECT_STATS
-    hash_watcher[hash].free_read_calls = 0;
-#endif
 }
 
 static void reset_accelerator(hash_t hash)
@@ -368,11 +361,7 @@ asmlinkage int hook_close(int fd)
         hash = crc16_from_pointer(_file);
         if (hash_watcher[hash].file_pointer == _file)
         {
-#ifdef COLLECT_STATS
-            printk(DEBUG_LEVEL "[diob_lkm] [%04x] hook_close(fd = %d), saved %ld read calls.\n", hash, fd, hash_watcher[hash].free_read_calls);
-#else
-            printk(DEBUG_LEVEL "[diob_lkm] [%04x] hook_close(fd = %d)\n", hash, fd);
-#endif
+            printk(DEBUG_LEVEL "[diob_lkm] [%04x] hook_close(fd = %d), global read calls saved: %ld\n", hash, fd, free_read_calls);
             reset_watcher(hash);
         }
     }
@@ -573,9 +562,7 @@ asmlinkage ssize_t hook_read(int fd, void *buf, size_t count)
                         
                         return (int)lseek_result;
                     }
-#ifdef COLLECT_STATS
-                        hash_watcher[hash].free_read_calls++;
-#endif
+                    free_read_calls++;
                     // decrease use count
                     module_put(THIS_MODULE);
                     
